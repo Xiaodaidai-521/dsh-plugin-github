@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Syntax check
+        run: |
+          node --check lib/index.js
+          node --check lib/client.js
+
+      - name: Package manifest sanity
+        run: |
+          node --input-type=module -e "
+            import { readFileSync, existsSync } from 'node:fs'
+            const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+            const problems = []
+
+            if (!pkg.dsh?.bundle?.patch) problems.push('dsh.bundle.patch missing')
+            if (pkg.dsh?.client?.platform !== 'web') problems.push('dsh.client.platform must be \"web\"')
+            if (!Array.isArray(pkg.dsh?.client?.inject)) problems.push('dsh.client.inject must be an array')
+
+            const clientEntry = pkg.exports?.['./client']
+            const clientPath = typeof clientEntry === 'string' ? clientEntry : clientEntry?.default
+            if (!clientPath) problems.push('exports[\"./client\"] missing')
+            else if (!existsSync(clientPath)) problems.push('exports[\"./client\"] points at a missing file: ' + clientPath)
+
+            const patch = pkg.dsh.bundle.patch
+            if (!existsSync(patch)) problems.push('dsh.bundle.patch file missing: ' + patch)
+
+            if (!pkg.repository?.url) problems.push('repository.url missing')
+            if (!pkg.license) problems.push('license missing')
+
+            for (const f of ['lib/index.js', 'lib/client.js', 'cordis.patch.yml', 'README.md', 'LICENSE', 'icon.svg']) {
+              if (!existsSync(f)) problems.push('missing file: ' + f)
+            }
+
+            for (const loc of ['locale/en.json', 'locale/zh.json']) {
+              if (!existsSync(loc)) { problems.push('missing: ' + loc); continue }
+              const parsed = JSON.parse(readFileSync(loc, 'utf8'))
+              if (!parsed.meta?.title) problems.push(loc + ' has no meta.title')
+            }
+
+            if (problems.length) {
+              console.error('manifest problems:\n  - ' + problems.join('\n  - '))
+              process.exit(1)
+            }
+            console.log('manifest ok')
+          "
+
+      - name: Client bundle contract (offline)
+        run: node scripts/verify-client.mjs
+
+      - name: No committed secrets
+        run: |
+          # Personal access tokens and private keys must never land in the repo.
+          if grep -rnE '(ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' \
+               --include='*.js' --include='*.mjs' --include='*.json' --include='*.yml' --include='*.md' . ; then
+            echo "::error::a credential-looking string is committed"
+            exit 1
+          fi
+          echo "no secrets found"
