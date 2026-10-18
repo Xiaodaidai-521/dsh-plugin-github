@@ -337,6 +337,98 @@ check('code page renders with repo state', () => {
   const still = removed.filter((token) => text.includes(token))
   if (still.length) throw new Error(`removed surfaces still render: ${still.join(', ')}`)
 })
+
+// ------------------------------------------------- switching repositories
+// Regression guard: clicking another repository used to keep `repo` from the
+// stale closure, so the browse request carried the PREVIOUS repository and its
+// files were painted under the new header.
+console.log('\n[6] switching repositories queries the NEW repository')
+{
+  const source = readFileSync(join(here, pkg.exports['./client']), 'utf8')
+  const queue = new Array(35).fill('')
+  queue[0] = 'Xiaodaidai-521/ctf'
+  queue[1] = {
+    authenticated: true,
+    login: 'Xiaodaidai-521',
+    canStore: true,
+    canDeviceFlow: true,
+    repo: { fullName: 'Xiaodaidai-521/ctf', defaultBranch: 'main', stars: 1, forks: 0, watchers: 0, private: false, htmlUrl: '' },
+    branches: [{ name: 'main' }],
+    pulls: [],
+  }
+  queue[10] = []
+  queue[11] = false
+  queue[25] = [
+    { fullName: 'Xiaodaidai-521/ctf', owner: 'Xiaodaidai-521', private: false, language: 'Python', pushedAt: null },
+    { fullName: 'Xiaodaidai-521/dsh-plugin-github', owner: 'Xiaodaidai-521', private: false, language: 'JavaScript', pushedAt: null },
+  ]
+  queue[26] = true // picker open
+  queue[27] = '' // picker filter
+
+  const calls = []
+  const previousFetch = globalThis.fetch
+  const respond = (data) => ({ ok: true, status: 200, json: async () => data })
+  globalThis.fetch = async (url, init) => {
+    const payload = init && init.body ? JSON.parse(init.body) : {}
+    calls.push({ url: String(url), payload })
+    if (String(url).includes('/state')) {
+      const repo = payload.repo || 'Xiaodaidai-521/ctf'
+      return respond({
+        authenticated: true,
+        login: 'Xiaodaidai-521',
+        repo: { fullName: repo, defaultBranch: 'main', stars: 0, forks: 0, watchers: 0, private: false, htmlUrl: '' },
+        branches: [{ name: 'main' }],
+        pulls: [],
+      })
+    }
+    if (payload.action === 'browse') {
+      return respond({ ok: true, result: { repository: payload.repo, branch: payload.branch, path: payload.path || '', entries: [], head: null } })
+    }
+    if (payload.action === 'overview') {
+      return respond({ ok: true, result: { repo: { fullName: payload.repo, stars: 0, forks: 0, watchers: 0, description: '' }, languages: {}, releases: [], contributors: [], tagCount: 0, commitCount: 0, readme: null } })
+    }
+    return respond({ ok: true })
+  }
+
+  try {
+    const deep = loadBundle(source, reactWith(queue))
+    const main = mount(deep.exported).find((r) => r.declaration.name === 'main')
+    const tree = main.renderer({}).type()
+
+    // find the picker row for the second repository and click it
+    let target = null
+    const walk = (node) => {
+      if (!node || typeof node !== 'object' || target) return
+      if (Array.isArray(node)) {
+        for (const child of node) walk(child)
+        return
+      }
+      const props = node.props || {}
+      if (typeof props.onClick === 'function' && String(props.className || '').includes('dpg-picker-item')) {
+        const text = collectText(node, []).join(' ')
+        if (text.includes('dsh-plugin-github')) target = props
+        return
+      }
+      walk(node.children)
+      walk(props.children)
+    }
+    walk(tree)
+    if (!target) throw new Error('could not find the other repository in the picker')
+
+    target.onClick()
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    const browses = calls.filter((c) => c.payload.action === 'browse')
+    if (browses.length === 0) throw new Error('clicking a repository issued no browse request')
+    const wanted = browses.filter((c) => c.payload.repo === 'Xiaodaidai-521/dsh-plugin-github')
+    if (wanted.length === 0) {
+      throw new Error(`browse used the wrong repository: ${JSON.stringify(browses.map((c) => c.payload.repo))}`)
+    }
+    console.log(`        browse targets after switch: ${JSON.stringify(wanted.map((c) => c.payload.repo))}`)
+  } finally {
+    globalThis.fetch = previousFetch
+  }
+}
 // --------------------------------------------------------------- negative control
 console.log('\n[5] negative control (a broken backup must be rejected)')
 const libDir = join(here, 'lib')
