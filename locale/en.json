@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitHub (dsh-plugin-github)",
+    "description": "Connect to GitHub from the agent: browse repositories and branches, create branches, open and inspect pull requests, and upload, commit or delete files."
+  }
+}

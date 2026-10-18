@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "GitHub（dsh-plugin-github）",
+    "description": "让智能体直连 GitHub：浏览仓库与分支、创建分支、发起与查看 Pull Request，以及上传、提交、删除文件。"
+  }
+}

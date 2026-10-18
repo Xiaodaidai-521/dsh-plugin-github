@@ -1,0 +1,5 @@
+# Bundle patch layer: load this package's main entry as the host half
+# (a plain Cordis plugin registering GitHub tools on ctx.tools).
+- insert:
+    - id: dsh-plugin-github
+      name: dsh-plugin-github
