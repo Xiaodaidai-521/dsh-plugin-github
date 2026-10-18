@@ -1,11 +1,13 @@
-// Device-flow wiring: without a client id the host must refuse with a clear,
-// actionable message; with one it must speak GitHub's protocol correctly.
+// Device-flow wiring against a real OAuth App.
+//
+// The package ships a built-in public client id, so a fresh host can start a
+// real device flow with no configuration at all. A configured override must win
+// over it — proven by GitHub rejecting the override.
 import { apply } from '../lib/index.js'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Isolate from the real harness data dir: this test needs a host that has no
-// stored OAuth client id at all.
+// Isolate from the real harness data dir so a saved id cannot mask a failure.
 process.env.DSH_HOME = join(tmpdir(), 'dsh-plugin-github-devtest-' + Date.now())
 
 function mount(config) {
@@ -39,46 +41,41 @@ async function post(route, payload) {
   return response.json()
 }
 
-// --- no client id configured -------------------------------------------------
-console.log('[1] no oauthClientId')
-{
-  const routes = mount({ repository: 'Xiaodaidai-521/ctf' })
-  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
-  console.log(`  state.canDeviceFlow = ${state.canDeviceFlow}`)
-  if (state.canDeviceFlow !== false) { console.log('  FAIL'); process.exit(1) }
-
-  const started = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceStart' })
-  console.log(`  start => ok=${started.ok} needsClientId=${started.needsClientId}`)
-  console.log(`  message: ${String(started.error).slice(0, 70)}…`)
-  if (started.ok !== false || started.needsClientId !== true) { console.log('  FAIL'); process.exit(1) }
-
-  const polled = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDevicePoll' })
-  console.log(`  poll without a flow => ok=${polled.ok} error=${String(polled.error).slice(0, 30)}`)
-  if (polled.ok !== false) { console.log('  FAIL'); process.exit(1) }
-}
-
-// --- client id configured, bogus value --------------------------------------
-// A fake client id exercises the real request shape: GitHub must answer, and the
-// host must surface its error instead of hanging or throwing.
-console.log('\n[2] bogus oauthClientId reaches GitHub and reports its answer')
-{
-  const routes = mount({ repository: 'Xiaodaidai-521/ctf', oauthClientId: 'Iv1.0000000000000000' })
-  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
-  console.log(`  state.canDeviceFlow = ${state.canDeviceFlow}`)
-  if (state.canDeviceFlow !== true) { console.log('  FAIL'); process.exit(1) }
-
-  const started = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceStart' })
-  console.log(`  start => ok=${started.ok}`)
-  if (started.ok) {
-    console.log(`  userCode=${started.result.userCode} uri=${started.result.verificationUri} interval=${started.result.interval}`)
-    const polled = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDevicePoll' })
-    console.log(`  first poll => ok=${polled.ok} pending=${polled.pending} error=${polled.error || '-'}`)
-    const cancelled = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceCancel' })
-    console.log(`  cancel => ok=${cancelled.ok}`)
-  } else {
-    console.log(`  GitHub answered: ${String(started.error).slice(0, 90)}`)
-    console.log('  (a bogus client id must be rejected — wiring is correct)')
+let failures = 0
+function ok(label, condition, detail) {
+  if (condition) console.log(`  PASS  ${label}${detail ? ' — ' + detail : ''}`)
+  else {
+    failures += 1
+    console.log(`  FAIL  ${label}${detail ? ' — ' + detail : ''}`)
   }
 }
 
-console.log('\nDEVICE FLOW WIRING OK')
+console.log('\n[1] built-in client id: zero configuration')
+{
+  const routes = mount({})
+  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
+  ok('canDeviceFlow without any config', state.canDeviceFlow === true)
+
+  const started = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceStart' })
+  ok('device/code accepted by GitHub', started.ok === true, started.ok ? '' : String(started.error).slice(0, 80))
+  if (started.ok) {
+    ok('user code shape', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(started.result.userCode), started.result.userCode)
+    ok('verification uri', /login\/device/.test(started.result.verificationUri), started.result.verificationUri)
+    ok('scopes include workflow', String(started.result.scopes).includes('workflow'), started.result.scopes)
+    const cancelled = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceCancel' })
+    ok('cancel clears the flow', cancelled.ok === true)
+  }
+}
+
+console.log('\n[2] a configured client id overrides the built-in one')
+{
+  const routes = mount({ oauthClientId: 'Iv1.0000000000000000' })
+  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
+  ok('still reports device flow available', state.canDeviceFlow === true)
+
+  const started = await post(routes.get('/api/dsh-plugin-github/action'), { action: 'loginDeviceStart' })
+  ok('the override is the id GitHub sees (bogus id rejected)', started.ok === false, String(started.error || '').slice(0, 60))
+}
+
+console.log(`\n${failures === 0 ? 'DEVICE FLOW WIRING OK' : failures + ' CHECK(S) FAILED'}\n`)
+process.exit(failures === 0 ? 0 : 1)

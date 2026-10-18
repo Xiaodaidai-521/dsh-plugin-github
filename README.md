@@ -104,8 +104,16 @@ The sign-in screen also accepts a PAT — `repo` scope, or `public_repo` for rea
 ### Where the token lives
 
 - Preferred: the DSH credential store (`GITHUB_TOKEN`), written through `ctx.credentials`.
-- Otherwise: `<DSH_HOME>/storages/dsh-plugin-github/token.json`, written with restrictive permissions.
+  When the store accepts it, **nothing is written to disk by this plugin**.
+- Otherwise: `<DSH_HOME>/storages/dsh-plugin-github/token.json` — **AES-256-GCM encrypted**, with the
+  key derived from the machine name, the current user and the platform. Copying that file to another
+  account or machine does not yield a usable token, and a modified file fails its authentication tag
+  instead of being used.
 - It is **never** sent to the browser, never stored in `localStorage`, and never echoed in any response.
+
+What the encryption buys, honestly: it removes the "plaintext secret sitting on disk" case. It is **not**
+a secret store — anyone who can already run code as this user can re-derive the key. For that threat
+model the DSH credential store is the right place, which is why it is tried first.
 
 Resolution order: credential store → token saved by the panel → environment (`GITHUB_TOKEN` / `GH_TOKEN`) → `gh auth token`. Signing out removes the saved copies and suppresses the environment / `gh` fallbacks for that process.
 
@@ -120,6 +128,9 @@ Resolution order: credential store → token saved by the panel → environment 
 - Sign-in state is per host, not per DSH user — the last account signed in is the one used.
 - The panel implements Code / Issues / Pull requests / Actions. Projects, Wiki, Security and Insights are deliberately absent rather than shown as dead tabs.
 - `github_commit` requires the target branch to exist; create it first with `github_create_branch` or in the panel.
+- The bundled client id identifies this plugin's OAuth App, **not you**: every user who signs in
+  authorizes their own GitHub account, and the resulting token never leaves their machine.
+- Writing a file under `.github/workflows/` needs the `workflow` scope; without it GitHub answers 404.
 
 ## Verifying it yourself
 

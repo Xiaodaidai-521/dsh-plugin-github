@@ -1,15 +1,27 @@
-// The client id saved from the sign-in screen must survive a restart and be
-// picked up by a fresh plugin instance without any config-file edit.
+// Client-id precedence, proven against the live GitHub API:
+//
+//   plugin config  >  value saved from the sign-in screen  >  built-in default
+//
+// A bogus id makes GitHub answer "Not Found", so "which id was used" is
+// observable from the outside instead of asserted from internals.
 import { apply } from '../lib/index.js'
-import { readFileSync, rmSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { join, dirname } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
-// Isolate this test from the real harness data directory.
-process.env.DSH_HOME = join(tmpdir(), 'dsh-plugin-github-test-' + Date.now())
+const here = join(dirname(fileURLToPath(import.meta.url)), '..')
+const builtIn = /const DEFAULT_OAUTH_CLIENT_ID = '([^']+)'/.exec(readFileSync(join(here, 'lib/index.js'), 'utf8'))
+if (!builtIn) {
+  console.error('could not find DEFAULT_OAUTH_CLIENT_ID in lib/index.js')
+  process.exit(1)
+}
+const BUILT_IN = builtIn[1]
+const BOGUS = 'Ov23liBogusStoredTest01'
 
-const dataDir = join(process.env.DSH_HOME, 'storages', 'dsh-plugin-github')
-const configFile = join(dataDir, 'config.json')
+const home = join(tmpdir(), 'dsh-plugin-github-clientid-' + Date.now())
+process.env.DSH_HOME = home
+const configFile = join(home, 'storages', 'dsh-plugin-github', 'config.json')
 
 function mount(config) {
   const routes = new Map()
@@ -36,58 +48,61 @@ async function post(route, payload) {
   return response.json()
 }
 
-// Start from a clean slate so a previous run cannot mask a failure.
-if (existsSync(configFile)) rmSync(configFile)
-
-console.log('[1] fresh install: no client id')
-{
-  const routes = mount({})
-  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
-  console.log(`  canDeviceFlow = ${state.canDeviceFlow}`)
-  if (state.canDeviceFlow !== false) process.exit(1)
-}
-
-console.log('\n[2] saving a client id from the sign-in screen')
-{
-  const routes = mount({})
-  const action = routes.get('/api/dsh-plugin-github/action')
-
-  const bad = await post(action, { action: 'setClientId', clientId: 'abc' })
-  console.log(`  rejected short value => ok=${bad.ok}`)
-  if (bad.ok !== false) process.exit(1)
-
-  const good = await post(action, { action: 'setClientId', clientId: 'Ov23liTestClientId0001' })
-  console.log(`  saved => ok=${good.ok}`)
-  if (!good.ok) process.exit(1)
-
-  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
-  console.log(`  canDeviceFlow right away = ${state.canDeviceFlow}`)
-  if (state.canDeviceFlow !== true) process.exit(1)
-}
-
-console.log('\n[3] persisted file')
-{
-  if (!existsSync(configFile)) { console.log('  FAIL: config file missing'); process.exit(1) }
-  const raw = JSON.parse(readFileSync(configFile, 'utf8'))
-  console.log(`  ${configFile}`)
-  console.log(`  contents = ${JSON.stringify(raw)}`)
-  if (raw.oauthClientId !== 'Ov23liTestClientId0001') { console.log('  FAIL: wrong contents'); process.exit(1) }
-}
-
-console.log('\n[4] a fresh instance (simulating a restart) picks it up')
-{
-  const routes = mount({})            // no config, no env
-  const state = await post(routes.get('/api/dsh-plugin-github/state'), {})
-  console.log(`  canDeviceFlow = ${state.canDeviceFlow}`)
-  if (state.canDeviceFlow !== true) { console.log('  FAIL: not read back'); process.exit(1) }
-}
-
-console.log('\n[5] explicit config still wins over the stored value')
-{
-  const routes = mount({ oauthClientId: 'Ov23liFromConfigX' })
+async function tryStart(config) {
+  const routes = mount(config)
   const action = routes.get('/api/dsh-plugin-github/action')
   const started = await post(action, { action: 'loginDeviceStart' })
-  console.log(`  start attempted => ok=${started.ok} (client id from config used)`)
+  if (started.ok) await post(action, { action: 'loginDeviceCancel' })
+  return started
 }
 
-console.log('\nCLIENT ID SETUP OK')
+let failures = 0
+function ok(label, condition, detail) {
+  if (condition) console.log(`  PASS  ${label}${detail ? ' — ' + detail : ''}`)
+  else {
+    failures += 1
+    console.log(`  FAIL  ${label}${detail ? ' — ' + detail : ''}`)
+  }
+}
+
+if (existsSync(configFile)) rmSync(configFile)
+
+console.log('\n[1] fresh install uses the built-in client id')
+{
+  const state = await post(mount({}).get('/api/dsh-plugin-github/state'), {})
+  ok('canDeviceFlow', state.canDeviceFlow === true)
+  ok('nothing saved yet', !existsSync(configFile))
+
+  const started = await tryStart({})
+  ok('built-in id works against GitHub', started.ok === true, started.ok ? '' : String(started.error).slice(0, 60))
+}
+
+console.log('\n[2] a saved client id takes over from the built-in one')
+{
+  const action = mount({}).get('/api/dsh-plugin-github/action')
+
+  const rejected = await post(action, { action: 'setClientId', clientId: 'abc' })
+  ok('short value rejected', rejected.ok === false)
+
+  const saved = await post(action, { action: 'setClientId', clientId: BOGUS })
+  ok('value saved', saved.ok === true)
+  ok('config file written', existsSync(configFile))
+  if (existsSync(configFile)) {
+    const raw = JSON.parse(readFileSync(configFile, 'utf8'))
+    ok('file holds the id', raw.oauthClientId === BOGUS, raw.oauthClientId)
+  }
+
+  // A fresh instance must prefer the stored (bogus) id, so GitHub rejects it.
+  const started = await tryStart({})
+  ok('stored id beats the built-in default (bogus id rejected)', started.ok === false, String(started.error || '').slice(0, 40))
+}
+
+console.log('\n[3] plugin config beats the saved value')
+{
+  const started = await tryStart({ oauthClientId: BUILT_IN })
+  ok('config id is used instead of the stored one', started.ok === true, started.ok ? '' : String(started.error).slice(0, 60))
+}
+
+rmSync(home, { recursive: true, force: true })
+console.log(`\n${failures === 0 ? 'CLIENT ID SETUP OK' : failures + ' CHECK(S) FAILED'}\n`)
+process.exit(failures === 0 ? 0 : 1)
