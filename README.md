@@ -1,5 +1,7 @@
 # dsh-plugin-github
 
+[![ci](https://github.com/Xiaodaidai-521/dsh-plugin-github/actions/workflows/ci.yml/badge.svg)](https://github.com/Xiaodaidai-521/dsh-plugin-github/actions/workflows/ci.yml)
+
 GitHub integration for DeepSeek Harness — sign in with your GitHub account, browse repositories the way github.com lays them out, and drive branches, pull requests, issues, Actions and file commits straight from the agent.
 
 <p align="center">
@@ -91,6 +93,9 @@ Register a GitHub OAuth App **once** — about a minute — and the client id is
 Paste it into the panel's sign-in screen (stored in `<DSH_HOME>/storages/dsh-plugin-github/config.json`), or supply it through the patch config / `GITHUB_OAUTH_CLIENT_ID`.
 
 **Sign in with GitHub** then shows an 8-character code; enter it at `github.com/login/device` and the panel continues on its own.
+
+The requested scopes are `repo read:user read:org workflow`. `workflow` is included because
+GitHub answers **404** — not 403 — when a write touches `.github/workflows/` without it.
 
 ### Fallback: Personal Access Token
 
