@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-github",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "GitHub integration for DeepSeek Harness — sign in with GitHub, browse repositories like github.com, and drive branches, pull requests, issues, actions and file commits from the agent.",
   "icon": "icon.svg",
   "type": "module",
@@ -22,6 +22,7 @@
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "dsh": {
