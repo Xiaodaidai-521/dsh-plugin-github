@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.0
+
+The panel stops being a repository browser with a status line and starts being a supervision console.
+
+- **Per-session changes.** The tracker is keyed by Session, so the strip can no longer show another
+  session's edits. The client asks for the session it can identify (`useSessions` through the slot
+  props, best effort) and the host falls back to the newest entry.
+- **No more lying about time.** The strip reads `智能体 N 分钟前改了 …` from the host timestamp instead of
+  claiming "just now", and polls every 10 seconds while Code is open.
+- **An exit, not just telemetry.** `开 PR` turns the change set into a pull-request draft: a title from the
+  first file, and a body listing every changed path with the added/deleted totals.
+- **The fact lives in the table too.** Files the agent touched float to the top of the file table and
+  carry a dot, so the strip and the table tell one story.
+- **One working surface.** `Star / Fork / 在 GitHub 打开 / 退出登录` moved behind a single `⋯` menu; the
+  header is now `刷新` + `⋯`. Those are once-a-month actions, not working controls.
+
 ## 1.2.0
 
 The panel now knows what the session's agent is doing.
