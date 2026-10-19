@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.3
+
+The change strip can be closed — for one change, not for good.
+
+- **A close control on the strip.** `✕` at the end of the header puts the strip away. It acknowledges the
+  change set the host reported (`at|seq`), so polling the same change every 10 seconds cannot bring it back
+  immediately, and a **newer** change re-opens the strip on its own — closing means "I have seen this",
+  never "stop supervising me".
+- The acknowledgement lives in memory, not in storage: it survives switching panels but resets on reload, so
+  the strip is back the next time you open the app or switch repositories.
+- Tests: `verify-agent.mjs` now drives a real click on the close control with a stateful hook harness, and
+  proves the strip stays closed for the same change set and returns for the next one.
+
 ## 1.3.2
 
 The panel can no longer disappear and leave a blank white column.

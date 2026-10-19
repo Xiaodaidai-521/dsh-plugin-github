@@ -312,5 +312,169 @@ console.log('\n[7] the header keeps one working control')
   ok('the menu trigger is present', body.includes('⋯'))
 }
 
+// ---------------------------------------------------------------------------
+// [8] the strip closes on request, and returns for the NEXT change
+// A small stateful React: hooks keep their order across renders, a setter writes
+// its slot, and the test re-renders by hand — enough to drive a real click.
+// ---------------------------------------------------------------------------
+function makeStatefulReact(queue) {
+  const slots = []
+  let cursor = 0
+  const api = {
+    createElement: (type, props, ...children) => ({ type, props, children }),
+    Fragment: Symbol('Fragment'),
+    Component: class Component {
+      constructor(props) {
+        this.props = props
+      }
+    },
+    useState(initial) {
+      const index = cursor
+      cursor += 1
+      if (!(index in slots)) {
+        slots[index] = queue && queue.length
+          ? queue.shift()
+          : (typeof initial === 'function' ? initial() : initial)
+      }
+      const set = (value) => {
+        slots[index] = typeof value === 'function' ? value(slots[index]) : value
+      }
+      return [slots[index], set]
+    },
+    useEffect() {
+      cursor += 1
+    },
+    useMemo(fn) {
+      cursor += 1
+      return fn()
+    },
+    useCallback(fn) {
+      cursor += 1
+      return fn
+    },
+    useRef(value) {
+      const index = cursor
+      cursor += 1
+      if (!(index in slots)) slots[index] = { current: value }
+      return slots[index]
+    },
+  }
+  return {
+    api,
+    slots,
+    begin: () => {
+      cursor = 0
+    },
+    /** Swap the first state slot that matches, the way a poll response would. */
+    replace: (predicate, next) => {
+      for (let index = 0; index < slots.length; index += 1) {
+        if (predicate(slots[index])) {
+          slots[index] = next
+          return true
+        }
+      }
+      return false
+    },
+  }
+}
+
+function loadStatefulClient(preset) {
+  const harness = makeStatefulReact(preset.slice())
+  const source = readFileSync(join(here, pkg.exports['./client']), 'utf8')
+  let spec
+  globalThis.window = { __ModuleLoader__: { load: (captured) => { spec = captured } } }
+  new Function(source)()
+  const exported = spec.factory((id) => (id === 'react' ? harness.api : {}))
+  const registrations = []
+  exported.apply({
+    slots: {
+      inject: (slot, fn) => { fn(); return () => {} },
+      register: (declaration, renderer) => { registrations.push({ declaration, renderer }); return () => {} },
+    },
+  })
+  const main = registrations.find((r) => r.declaration.name === 'main')
+
+  // Resolve the seat down to the panel component once; re-render by calling it.
+  const seat = main.renderer({})
+  const outer = seat.type(seat.props || {})
+  if (!outer || !outer.type || outer.type.name !== 'PanelBoundary') {
+    throw new Error('main seat is not wrapped in PanelBoundary')
+  }
+  const child = Array.isArray(outer.children) ? outer.children[0] : outer.children
+  const bodyFn = child.type
+  const bodyProps = child.props || {}
+  return {
+    body: bodyFn,
+    replace: harness.replace,
+    render: () => {
+      harness.begin()
+      return bodyFn(bodyProps)
+    },
+  }
+}
+
+function findButton(node, marker) {
+  let found = null
+  const walk = (candidate) => {
+    if (!candidate || typeof candidate !== 'object' || found) return
+    if (Array.isArray(candidate)) {
+      for (const child of candidate) walk(child)
+      return
+    }
+    const className = String((candidate.props && candidate.props.className) || '')
+    if (typeof (candidate.props && candidate.props.onClick) === 'function' && className.includes(marker)) {
+      found = candidate.props
+      return
+    }
+    walk(candidate.children)
+    if (candidate.props) walk(candidate.props.children)
+  }
+  walk(node)
+  return found
+}
+
+console.log('\n[8] the strip closes on request and returns for the next change')
+{
+  const first = {
+    at: '2026-10-19T03:00:00.000Z',
+    seq: 7,
+    total: 1,
+    added: 2,
+    deleted: 1,
+    ageMs: 60000,
+    exactSession: true,
+    files: [{ index: 0, path: 'a.txt', display: 'a.txt', added: 2, deleted: 1 }],
+  }
+  const client = loadStatefulClient(clientPreset(first))
+
+  let tree = client.render()
+  ok('the strip is visible before anything is closed', texts(tree).join(' | ').includes('智能体'))
+  ok('the strip offers a close control', Boolean(findButton(tree, 'dpg-agent-close')))
+  ok('the close control is a ghost button',
+    classes(tree).some((c) => c.includes('dpg-agent-close') && c.includes('ghost')))
+
+  const closer = findButton(tree, 'dpg-agent-close')
+  closer.onClick()
+
+  // polling keeps delivering the SAME change set; it must stay closed
+  tree = client.render()
+  if (client.replace((value) => value && value.at === first.at, Object.assign({}, first, { ageMs: 180000 }))) {
+    tree = client.render()
+  }
+  ok('closing hides the strip', !texts(tree).join(' | ').includes('智能体'))
+  const page = texts(tree).join(' | ')
+  ok('closing leaves the page itself intact', page.includes('Code') && page.includes('Pull requests'))
+
+  // a NEWER change set re-opens supervision with no user action
+  const newer = Object.assign({}, first, { at: '2026-10-19T03:05:00.000Z', seq: 9, total: 2, added: 7 })
+  if (!client.replace((value) => value && value.at === first.at, newer)) {
+    throw new Error('could not simulate the next change set')
+  }
+  tree = client.render()
+  const restored = texts(tree).join(' | ')
+  ok('a new change brings the strip back', restored.includes('智能体'))
+  ok('the restored strip shows the new totals', restored.includes('+7'))
+}
+
 console.log(`\n${failures === 0 ? 'AGENT CHANGES OK' : failures + ' CHECK(S) FAILED'}\n`)
 process.exit(failures === 0 ? 0 : 1)
