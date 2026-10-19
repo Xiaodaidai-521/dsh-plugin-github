@@ -103,17 +103,25 @@ The sign-in screen also accepts a PAT — `repo` scope, or `public_repo` for rea
 
 ### Where the token lives
 
-- Preferred: the DSH credential store (`GITHUB_TOKEN`), written through `ctx.credentials`.
-  When the store accepts it, **nothing is written to disk by this plugin**.
-- Otherwise: `<DSH_HOME>/storages/dsh-plugin-github/token.json` — **AES-256-GCM encrypted**, with the
-  key derived from the machine name, the current user and the platform. Copying that file to another
-  account or machine does not yield a usable token, and a modified file fails its authentication tag
-  instead of being used.
-- It is **never** sent to the browser, never stored in `localStorage`, and never echoed in any response.
+A successful sign-in writes **both** places, on purpose:
 
-What the encryption buys, honestly: it removes the "plaintext secret sitting on disk" case. It is **not**
-a secret store — anyone who can already run code as this user can re-derive the key. For that threat
-model the DSH credential store is the right place, which is why it is tried first.
+- The DSH credential store (`GITHUB_TOKEN`), written through `ctx.credentials` — the preferred one.
+- `<DSH_HOME>/storages/dsh-plugin-github/token.json` — an independent copy, **AES-256-GCM encrypted**,
+  with the key derived from the machine name, the current user and the platform.
+
+The second copy exists because the credential store is owned by the host: a profile rebuild, an app
+update or a reset can drop the entry, and then the panel silently becomes "signed out" and asks you to
+sign in again. Keeping an independent, encrypted copy is what makes a sign-in survive that.
+
+The file is unreadable on another account or machine, and a modified file fails its authentication tag
+instead of being used. What the encryption buys, honestly: it removes the "plaintext secret sitting on
+disk" case. It is **not** a secret store — anyone who can already run code as this user can re-derive the
+key.
+
+If GitHub ever rejects a saved token with 401, the plugin deletes it from both places and asks for a
+fresh sign-in rather than failing forever.
+
+- The token is **never** sent to the browser, never stored in `localStorage`, and never echoed in any response.
 
 Resolution order: credential store → token saved by the panel → environment (`GITHUB_TOKEN` / `GH_TOKEN`) → `gh auth token`. Signing out removes the saved copies and suppresses the environment / `gh` fallbacks for that process.
 

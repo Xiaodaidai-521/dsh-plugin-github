@@ -105,6 +105,35 @@ console.log('\n[2] token persistence on a host whose credential store is unusabl
   }
 }
 
+console.log('\n[2b] a working credential store does NOT replace the disk backup')
+{
+  // The store is owned by the host: a profile rebuild can reset it. The
+  // encrypted file is the copy that survives that, so a successful sign-in must
+  // write BOTH.
+  const { execFileSync } = await import('node:child_process')
+  let realToken = ''
+  try {
+    realToken = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim()
+  } catch {
+    realToken = ''
+  }
+  if (!realToken) {
+    console.log('  SKIP: no real token on this host')
+  } else {
+    rmSync(join(dataDir, 'token.json'), { force: true })
+    const { routes, store } = mount({}) // credentials present and writable
+    const action = routes.get('/api/dsh-plugin-github/action')
+    const logged = await post(action, { action: 'login', token: realToken })
+    console.log(`  login => ok=${logged.ok} stored=${logged.result && logged.result.stored}`)
+    if (!logged.ok) process.exit(1)
+
+    console.log(`  credential store holds it = ${store.has('GITHUB_TOKEN')}`)
+    console.log(`  encrypted file also exists = ${existsSync(join(dataDir, 'token.json'))}`)
+    if (!store.has('GITHUB_TOKEN')) { console.log('  FAIL: store did not take it'); process.exit(1) }
+    if (!existsSync(join(dataDir, 'token.json'))) { console.log('  FAIL: no independent backup'); process.exit(1) }
+  }
+}
+
 console.log('\n[3] sign-out removes it and suppresses env/gh fallbacks')
 {
   const { routes } = mount({}, true)
