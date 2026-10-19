@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.2
+
+The panel can no longer disappear and leave a blank white column.
+
+- **Crash found and removed.** The panel called `props.useSessions()` — an optional hook that a root-scoped
+  main panel is not guaranteed to have — from inside a `try/catch`, after 35 unconditional `useState` calls.
+  A hook that throws (or that appears on a later render) corrupts React's hook ledger, the render throws, and
+  the slot registry retires the entry as *abdicated*. The seat still had its sidebar icon, but the panel
+  column rendered nothing at all. Session identity now comes from the plain `sessionId` prop only; no hook is
+  called here that the seat does not guarantee.
+- **A blank column is now impossible.** The seat is wrapped in an error boundary: if the panel ever throws, it
+  renders the real error message plus `重试` instead of vanishing, and logs
+  `[dsh-plugin-github] panel crashed:` with the stack.
+- Tests: `verify-client.mjs` now fails if the optional hook is ever called again, and renders a deliberately
+  throwing panel to prove the boundary shows the message rather than a white column.
+
 ## 1.3.0
 
 The panel stops being a repository browser with a status line and starts being a supervision console.

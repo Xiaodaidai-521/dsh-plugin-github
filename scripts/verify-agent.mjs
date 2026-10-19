@@ -176,6 +176,11 @@ console.log('\n[4] diff is flattened into display lines')
 const fakeReactBase = {
   createElement: (type, props, ...children) => ({ type, props, children }),
   Fragment: Symbol('Fragment'),
+  Component: class Component {
+    constructor(props) {
+      this.props = props
+    }
+  },
   useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {},
   useMemo: (fn) => fn(),
@@ -201,7 +206,16 @@ function loadClient(preset) {
     },
   })
   const main = registrations.find((r) => r.declaration.name === 'main')
-  return main.renderer({}).type()
+  // The seat returns the crash boundary; unwrap it to the real panel body.
+  const seat = main.renderer({})
+  let node = seat.type(seat.props || {})
+  if (node && typeof node === 'object' && node.type && node.type.name === 'PanelBoundary') {
+    const child = Array.isArray(node.children) ? node.children[0] : node.children
+    node = child && typeof child === 'object' && typeof child.type === 'function'
+      ? child.type(child.props || {})
+      : child
+  }
+  return node
 }
 
 function texts(node, out = []) {

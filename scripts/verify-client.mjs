@@ -38,6 +38,11 @@ const BASELINE = new Set([
 const fakeReact = {
   createElement: (type, props, ...children) => ({ type, props, children }),
   Fragment: Symbol('Fragment'),
+  Component: class Component {
+    constructor(props) {
+      this.props = props
+    }
+  },
   useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {},
   useMemo: (fn) => fn(),
@@ -190,7 +195,7 @@ check('login form is shown for a fresh user', () => {
   ]))
   const seats = mount(anon.exported)
   const main = seats.find((r) => r.declaration.name === 'main')
-  const text = collectText(main.renderer({}).type(), []).join(' | ')
+  const text = collectText(renderMain(main, {}), []).join(' | ')
 
   for (const token of ['Connect to GitHub', 'Personal Access Token', 'Sign in', 'Personal access tokens']) {
     if (!text.includes(token)) throw new Error('login screen missing: ' + token)
@@ -207,7 +212,7 @@ check('device-code screen renders while authorization is pending', () => {
   const anon = loadBundle(source, reactWith(queue))
   const seats = mount(anon.exported)
   const main = seats.find((r) => r.declaration.name === 'main')
-  const text = collectText(main.renderer({}).type(), []).join(' | ')
+  const text = collectText(renderMain(main, {}), []).join(' | ')
 
   for (const token of ['ABCD-1234', '打开 GitHub 授权页面', '等待授权中']) {
     if (!text.includes(token)) throw new Error('device screen missing: ' + token)
@@ -221,7 +226,7 @@ check('missing client id explains itself', () => {
   queue[9] = false
   const anon = loadBundle(source, reactWith(queue))
   const main = mount(anon.exported).find((r) => r.declaration.name === 'main')
-  const text = collectText(main.renderer({}).type(), []).join(' | ')
+  const text = collectText(renderMain(main, {}), []).join(' | ')
   if (!text.includes('未配置 OAuth App client_id')) throw new Error('missing client-id guidance')
   if (!text.includes('Personal Access Token')) throw new Error('PAT fallback not offered')
   // the setup affordances must be on screen, not hidden in a config file
@@ -256,6 +261,23 @@ function collectText(node, out) {
     if (node.props && node.props.children) collectText(node.props.children, out)
   }
   return out
+}
+
+/**
+ * Render the main seat the way the shell does: the seat returns a component
+ * element, that component returns the crash boundary, and the boundary's child
+ * is the real panel body. Unwrap them all so tests see the rendered tree.
+ */
+function renderMain(main, props) {
+  const element = main.renderer(props || {})
+  let node = typeof element.type === 'function' ? element.type(element.props || {}) : element
+  if (node && typeof node === 'object' && node.type && node.type.name === 'PanelBoundary') {
+    const child = Array.isArray(node.children) ? node.children[0] : node.children
+    node = child && typeof child === 'object' && typeof child.type === 'function'
+      ? child.type(child.props || {})
+      : child
+  }
+  return node
 }
 
 const repoInfo = {
@@ -319,7 +341,7 @@ check('code page renders with repo state', () => {
 
   const seats = mount(deep.exported)
   const main = seats.find((r) => r.declaration.name === 'main')
-  const tree = main.renderer({}).type()
+  const tree = renderMain(main, {})
   const text = collectText(tree, []).join(' | ')
 
   const expected = ['Code', 'Pull requests', 'About', '12 Commits', 'backend', '.gitignore', 'Add a README']
@@ -390,7 +412,7 @@ console.log('\n[6] switching repositories queries the NEW repository')
   try {
     const deep = loadBundle(source, reactWith(queue))
     const main = mount(deep.exported).find((r) => r.declaration.name === 'main')
-    const tree = main.renderer({}).type()
+    const tree = renderMain(main, {})
 
     // find the picker row for the second repository and click it
     let target = null
@@ -426,8 +448,57 @@ console.log('\n[6] switching repositories queries the NEW repository')
     globalThis.fetch = previousFetch
   }
 }
-// --------------------------------------------------------------- negative control
-console.log('\n[5] negative control (a broken backup must be rejected)')
+// --------------------------------------------------------------- crash guard
+// Regression: the panel used to call `props.useSessions()` from inside a
+// try/catch, after 34 unconditional hooks. The seat is root-scoped with no
+// guaranteed Session binding, so that hook could throw or appear on a later
+// render, corrupting the hook ledger. The slot registry then retired the entry
+// ("abdicated") and the user was left with an empty white column.
+console.log('\n[7] the panel can never blank out silently')
+
+check('an optional useSessions hook is never called', () => {
+  const source = readFileSync(join(here, pkg.exports['./client']), 'utf8')
+  const loaded2 = loadBundle(source)
+  const main = mount(loaded2.exported).find((r) => r.declaration.name === 'main')
+  let called = false
+  const props = {
+    sessionId: 'session-abc',
+    useSessions: () => {
+      called = true
+      throw new Error('root-scoped seat has no sessions binding')
+    },
+  }
+  const tree = renderMain(main, props)
+  if (called) throw new Error('the panel called the optional useSessions hook')
+  if (!tree) throw new Error('panel rendered nothing')
+  const text = collectText(tree, []).join(' | ')
+  if (!text.length) throw new Error('panel rendered no text')
+})
+
+check('a throwing panel is caught and shown instead of a blank column', () => {
+  const source = readFileSync(join(here, pkg.exports['./client']), 'utf8')
+  const loaded3 = loadBundle(source)
+  const main = mount(loaded3.exported).find((r) => r.declaration.name === 'main')
+  // the seat must hand back the crash boundary, not the raw body
+  const element = main.renderer({})
+  const outer = element.type(element.props || {})
+  if (!outer || outer.type.name !== 'PanelBoundary') {
+    throw new Error('main seat is not wrapped in PanelBoundary')
+  }
+  const Boundary = outer.type
+  const failure = new Error('boom inside the panel')
+  const state = Boundary.getDerivedStateFromError(failure)
+  if (!state || state.failure !== failure) throw new Error('boundary did not record the failure')
+  Boundary.prototype.componentDidCatch.call({}, failure, {})
+  const view = new Boundary({ children: null })
+  view.state = state
+  const text = collectText(view.render(), []).join(' | ')
+  if (!text.includes('GitHub 面板出错了')) throw new Error('boundary shows no error title')
+  if (!text.includes('boom inside the panel')) throw new Error('boundary hides the real error message')
+  if (!text.includes('重试')) throw new Error('boundary offers no retry')
+})
+
+
 const libDir = join(here, 'lib')
 const backups = existsSync(libDir) ? readdirSync(libDir).filter((f) => f.startsWith('client.js.bak-')).sort() : []
 
