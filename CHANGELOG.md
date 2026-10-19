@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+The panel now knows what the session's agent is doing.
+
+- **Agent-changes strip.** Above the commit row: how many files the agent just changed, the added/deleted
+  counts, one chip per file, and a click opens the real diff (hunks rendered inline) without leaving the
+  page.
+- Source of truth is the host's workspaceChanges service. The plugin remembers the newest
+  workspace/changes sequence from the session/event feed, then asks that service for the summary and
+  for each file's diff — so nothing is re-implemented and no snapshot is duplicated.
+- Degrades silently: no service, no recorded change, or a non-text file simply hides the strip.
+
+This is the first feature a github.com replica cannot have: the clone shows what the repository
+contains, this shows what just happened to it.
+
 ## 1.0.2
 
 A sign-in now survives more than a day.
