@@ -202,8 +202,8 @@ check('device-code screen renders while authorization is pending', () => {
   const queue = new Array(33).fill('')
   queue[0] = ''                       // repo
   queue[1] = { authenticated: false, login: null, canStore: true, canDeviceFlow: true }
-  queue[11] = false                   // loading
-  queue[31] = { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', interval: 5 }
+  queue[9] = false                    // loading
+  queue[29] = { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', interval: 5 }
   const anon = loadBundle(source, reactWith(queue))
   const seats = mount(anon.exported)
   const main = seats.find((r) => r.declaration.name === 'main')
@@ -218,7 +218,7 @@ check('missing client id explains itself', () => {
   const source = readFileSync(join(here, pkg.exports['./client']), 'utf8')
   const queue = new Array(33).fill('')
   queue[1] = { authenticated: false, login: null, canStore: true, canDeviceFlow: false }
-  queue[11] = false
+  queue[9] = false
   const anon = loadBundle(source, reactWith(queue))
   const main = mount(anon.exported).find((r) => r.declaration.name === 'main')
   const text = collectText(main.renderer({}).type(), []).join(' | ')
@@ -302,8 +302,6 @@ check('code page renders with repo state', () => {
     listingFixture,                 // listing
     '',                             // filter
     null,                           // file
-    [],                             // issues
-    [],                             // runs
     false,                          // loading
     '',                             // busy
     '',                             // error
@@ -324,16 +322,16 @@ check('code page renders with repo state', () => {
   const tree = main.renderer({}).type()
   const text = collectText(tree, []).join(' | ')
 
-  const expected = ['Code', 'Pull requests', 'Actions', 'About', 'Languages', '12 Commits', 'Branches', 'backend', '.gitignore', 'Add a README']
+  const expected = ['Code', 'Pull requests', 'About', '12 Commits', 'backend', '.gitignore', 'Add a README']
   const missing = expected.filter((token) => !text.includes(token))
   if (missing.length) throw new Error(`missing from rendered page: ${missing.join(', ')}`)
-  if (!text.includes('Python')) throw new Error('language legend missing')
 
   // the switcher lists the other repositories
   if (!text.includes('artex-global')) throw new Error('repo switcher did not render the repository list')
 
-  // removed surfaces must really be gone
-  const removed = ['Projects', 'Wiki', 'Security and quality', 'Insights', 'Settings', 'Packages', 'No packages published']
+  // cut surfaces must really be gone
+  const removed = ['Issues', 'Actions', 'Projects', 'Wiki', 'Security and quality', 'Insights',
+    'Settings', 'Packages', 'Languages', 'Contributors', 'Releases']
   const still = removed.filter((token) => text.includes(token))
   if (still.length) throw new Error(`removed surfaces still render: ${still.join(', ')}`)
 })
@@ -356,14 +354,13 @@ console.log('\n[6] switching repositories queries the NEW repository')
     branches: [{ name: 'main' }],
     pulls: [],
   }
-  queue[10] = []
-  queue[11] = false
-  queue[25] = [
+  queue[9] = false // loading
+  queue[23] = [
     { fullName: 'Xiaodaidai-521/ctf', owner: 'Xiaodaidai-521', private: false, language: 'Python', pushedAt: null },
     { fullName: 'Xiaodaidai-521/dsh-plugin-github', owner: 'Xiaodaidai-521', private: false, language: 'JavaScript', pushedAt: null },
   ]
-  queue[26] = true // picker open
-  queue[27] = '' // picker filter
+  queue[24] = true // picker open
+  queue[25] = '' // picker filter
 
   const calls = []
   const previousFetch = globalThis.fetch
